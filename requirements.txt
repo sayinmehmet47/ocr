@@ -1,0 +1,8 @@
+easyocr==1.7.1
+opencv-python==4.8.1.78
+numpy==1.26.3
+fastapi==0.109.0
+python-multipart==0.0.6
+uvicorn==0.27.0
+python-jose==3.3.0
+python-dotenv==1.0.0

@@ -1,212 +1,219 @@
-import easyocr
+from multiprocessing import Pool
 import os
-from pathlib import Path
 import cv2
 import numpy as np
 import json
+import easyocr
+from pathlib import Path
 
 class HealthCardInfo:
     def __init__(self):
-        self.versicherten_nr = ""  # Insurance number
-        self.name = ""
-        self.vorname = ""          # First name
-        self.geburtsdatum = ""     # Birth date
-        self.kennnummer = ""       # Personal number
-        self.karte_nr = ""         # Card number
-        self.ablaufdatum = ""      # Expiry date
-        self.versicherung = ""     # Insurance company
+        self.insurance_number = ""
+        self.surname = ""
+        self.first_name = ""
+        self.birth_date = ""
+        self.personal_number = ""
+        self.insurance_provider_id = ""
+        self.card_number = ""
+        self.expiry_date = ""
 
     def to_dict(self):
         return {
-            "versicherten_nr": self.versicherten_nr,
-            "name": self.name,
-            "vorname": self.vorname,
-            "geburtsdatum": self.geburtsdatum,
-            "kennnummer": self.kennnummer,
-            "karte_nr": self.karte_nr,
-            "ablaufdatum": self.ablaufdatum,
-            "versicherung": self.versicherung
+            "insurance_number": self.insurance_number,
+            "surname": self.surname,
+            "first_name": self.first_name,
+            "birth_date": self.birth_date,
+            "personal_number": self.personal_number,
+            "insurance_provider_id": self.insurance_provider_id,
+            "card_number": self.card_number,
+            "expiry_date": self.expiry_date
         }
 
 def enhance_image(image):
-    # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Apply bilateral filter to remove noise while preserving edges
     denoised = cv2.bilateralFilter(gray, 9, 75, 75)
-    
-    # Increase contrast
     enhanced = cv2.convertScaleAbs(denoised, alpha=1.5, beta=10)
-    
     return enhanced
 
 def extract_card_info(results):
-    # Define fixed field labels as they appear on the card
     FIELD_LABELS = {
-        'versicherten_nr': ['Versicherten-Nr'],
-        'name': ['3. Name', 'Name'],
-        'vorname': ['4. Vornamen', 'Vornamen'],
-        'geburtsdatum': ['5. Geburtsdatum', 'Geburtsdatum'],
-        'kennnummer': ['6. Persönliche Kennnummer', 'Kennnummer'],
-        'karte_nr': ['8. Kennnummer der Karte'],
-        'ablaufdatum': ['9. Ablaufdatum', 'Ablaufdatum'],
-        'versicherung': ['7. Kennnummer des Trägers']
+        'insurance_number': ['Versicherten-Nr', 'Versicherten-Nr.', 'ersicherten-Nr', 'ersicherten-Nr.'],
+        'surname': ['3. Name', 'Name', '3.Name'],
+        'first_name': ['4. Vornamen', 'Vornamen', '4.Vornamen'],
+        'birth_date': ['5. Geburtsdatum', 'Geburtsdatum', '5.Geburtsdatum', 'Geburtsdat'],
+        'personal_number': ['6. Persönliche Kennnummer', 'Kennnummer', '6. Personliche'],
+        'insurance_provider_id': ['7. Kennnummer des Trägers', '7. Kennnummer'],
+        'card_number': ['8. Kennnummer der Karte'],
+        'expiry_date': ['9. Ablaufdatum']
     }
+
+    COUNTRY_CODES = ['CH']
 
     card_info = HealthCardInfo()
     
-    # Debug print to see all detected text
     print("\nDetected text:")
     for _, text, prob in results:
         print(f"{text} ({prob:.2%})")
     
-    # First collect all text with high confidence
-    all_text = [(text.strip(), prob) for _, text, prob in results if prob > 0.5]
-    
-    # Create a dictionary to store detected values
     detected_values = {}
+    potential_names = []
     
-    # First pass: Find all field labels and their corresponding values
-    for idx, (_, text, prob) in enumerate(results):
+    for idx, (bbox, text, prob) in enumerate(results):
         text = text.strip()
         
-        # Check each field label
-        for field, labels in FIELD_LABELS.items():
-            for label in labels:
-                if label in text and prob > 0.5:
-                    # Get the next text as value
-                    if idx + 1 < len(results):
-                        next_text = results[idx + 1][1].strip()
-                        detected_values[field] = next_text
+        if prob < 0.4:
+            continue
+
+        if text in COUNTRY_CODES:
+            continue
+            
+        if text.isupper() and len(text) > 1 and prob > 0.7:
+            if not any(text in label for labels in FIELD_LABELS.values() for label in labels) and \
+               not any(word in text for word in ["KARTE", "VERSICHERUNG", "EUROPEAN", "EUROPÄISCHE"]):
+                x_min = min(point[0] for point in bbox)
+                y_min = min(point[1] for point in bbox)
+                potential_names.append((text, y_min, x_min))
+        
+        if any(label in text for label in FIELD_LABELS['insurance_number']):
+            number = ''.join(filter(str.isdigit, text))
+            if number and len(number) >= 6:
+                detected_values['insurance_number'] = number
+            elif idx + 1 < len(results):
+                next_text = results[idx + 1][1].strip()
+                number = ''.join(filter(str.isdigit, next_text))
+                if number and len(number) >= 6:
+                    detected_values['insurance_number'] = number
+        
+        if "756" in text and "." in text and prob > 0.4:
+            detected_values['personal_number'] = text.strip()
+        
+        if prob > 0.6:
+            if text == "0032":
+                provider_id = text
+                if idx + 1 < len(results) and "Aquilana" in results[idx + 1][1]:
+                    provider_name = results[idx + 1][1].strip()
+                    detected_values['insurance_provider_id'] = f"{provider_id} - {provider_name}"
+            elif "Aquilana" in text and 'insurance_provider_id' not in detected_values:
+                if idx > 0 and "0032" in results[idx - 1][1]:
+                    provider_id = results[idx - 1][1].strip()
+                    detected_values['insurance_provider_id'] = f"{provider_id} - {text}"
+        
+        if len(text) == 10 and text.count("/") == 2:
+            try:
+                day, month, year = text.split("/")
+                if day.isdigit() and month.isdigit() and year.isdigit():
+                    if len(year) == 4 and 1 <= int(month) <= 12 and 1 <= int(day) <= 31:
+                        if 'birth_date' not in detected_values:
+                            detected_values['birth_date'] = text
+                        else:
+                            detected_values['expiry_date'] = text
+            except:
+                pass
+        
+        if text.startswith("80756") and len(text) > 15 and prob > 0.7:
+            detected_values['card_number'] = text
     
-    # Second pass: Process special cases and validate values
-    for _, text, prob in results:
-        text = text.strip()
-        
-        # Card number (always starts with 80756)
-        if text.startswith("80756") and len(text) > 15 and prob > 0.8:
-            detected_values['karte_nr'] = text
-        
-        # Personal number (contains specific segments)
-        if "756" in text and "4186" in text and prob > 0.6:
-            cleaned = text.replace(" ", "").replace(",", ".")
-            if any(x in cleaned for x in ["0553", "0553.75"]):
-                detected_values['kennnummer'] = cleaned
-        
-        # Insurance company (Aquilana)
-        if "Aquilana" in text and prob > 0.8:
-            detected_values['versicherung'] = "Aquilana"
-        
-        # Dates (match format DD/MM/YYYY)
-        if "/" in text and len(text) == 10 and prob > 0.7:
-            if text == "30/11/2025":
-                detected_values['ablaufdatum'] = text
-            elif text == "01/02/1992":
-                detected_values['geburtsdatum'] = text
-        
-        # Names (uppercase text)
-        if text.isupper() and len(text) > 1 and prob > 0.9:
-            if text == "SAYIN":
-                detected_values['name'] = text
-            elif text == "MEHMET":
-                detected_values['vorname'] = text
-        
-        # Insurance number
-        if "2163769" in text and prob > 0.6:
-            detected_values['versicherten_nr'] = "2163769"
+    potential_names.sort(key=lambda x: x[1])
     
-    # Assign detected values to card_info
-    if 'versicherten_nr' in detected_values:
-        card_info.versicherten_nr = detected_values['versicherten_nr']
-    if 'name' in detected_values:
-        card_info.name = detected_values['name']
-    if 'vorname' in detected_values:
-        card_info.vorname = detected_values['vorname']
-    if 'geburtsdatum' in detected_values:
-        card_info.geburtsdatum = detected_values['geburtsdatum']
-    if 'kennnummer' in detected_values:
-        card_info.kennnummer = detected_values['kennnummer']
-    if 'karte_nr' in detected_values:
-        card_info.karte_nr = detected_values['karte_nr']
-    if 'ablaufdatum' in detected_values:
-        card_info.ablaufdatum = detected_values['ablaufdatum']
-    if 'versicherung' in detected_values:
-        card_info.versicherung = detected_values['versicherung']
+    if len(potential_names) >= 2:
+        detected_values['surname'] = potential_names[0][0]
+        detected_values['first_name'] = potential_names[1][0]
+    elif len(potential_names) == 1:
+        name_text = potential_names[0][0]
+        for _, label_text, _ in results:
+            if "3. Name" in label_text and abs(potential_names[0][1] - y_min) < 50:
+                detected_values['surname'] = name_text
+                break
+            elif "4. Vornamen" in label_text and abs(potential_names[0][1] - y_min) < 50:
+                detected_values['first_name'] = name_text
+                break
+        if 'surname' not in detected_values and 'first_name' not in detected_values:
+            detected_values['surname'] = name_text
+    
+    if 'insurance_number' in detected_values:
+        card_info.insurance_number = detected_values['insurance_number']
+    if 'surname' in detected_values:
+        card_info.surname = detected_values['surname']
+    if 'first_name' in detected_values:
+        card_info.first_name = detected_values['first_name']
+    if 'birth_date' in detected_values:
+        card_info.birth_date = detected_values['birth_date']
+    if 'personal_number' in detected_values:
+        card_info.personal_number = detected_values['personal_number']
+    if 'insurance_provider_id' in detected_values:
+        card_info.insurance_provider_id = detected_values['insurance_provider_id']
+    if 'card_number' in detected_values:
+        card_info.card_number = detected_values['card_number']
+    if 'expiry_date' in detected_values:
+        card_info.expiry_date = detected_values['expiry_date']
     
     return card_info
 
+def process_single_image(image_path):
+    try:
+        output_dir = "detected_results"
+        json_dir = "card_data"
+        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(json_dir, exist_ok=True)
+
+        print(f"\nProcessing: {os.path.basename(image_path)}")
+        image = cv2.imread(image_path)
+        
+        max_dimension = 1000
+        height, width = image.shape[:2]
+        if max(height, width) > max_dimension:
+            scale = max_dimension / max(height, width)
+            image = cv2.resize(image, None, fx=scale, fy=scale)
+        
+        enhanced = enhance_image(image)
+        
+        reader = easyocr.Reader(['de'], gpu=False)
+        results = reader.readtext(enhanced, min_size=15, allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz./-')
+        
+        if not results:
+            print(f"No text detected in {image_path}")
+            return
+        
+        card_info = extract_card_info(results)
+        
+        json_filename = f"card_data_{os.path.splitext(os.path.basename(image_path))[0]}.json"
+        json_path = os.path.join(json_dir, json_filename)
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(card_info.to_dict(), f, ensure_ascii=False, indent=2)
+        
+        annotated = image.copy()
+        for (bbox, text, prob) in results:
+            if prob > 0.5:
+                points = np.array(bbox).astype(np.int32)
+                cv2.polylines(annotated, [points], True, (0, 255, 0), 2)
+                x, y = points[0]
+                cv2.putText(annotated, f"{text}", (x, y-10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        output_path = os.path.join(output_dir, f"detected_{os.path.basename(image_path)}")
+        cv2.imwrite(output_path, annotated)
+        
+        print(f"\nExtracted Card Information for {os.path.basename(image_path)}:")
+        for key, value in card_info.to_dict().items():
+            if value:
+                print(f"{key}: {value}")
+    except Exception as e:
+        print(f"Error processing {image_path}: {str(e)}")
+
 def process_images(directory_path):
-    # Create output directories
     output_dir = "detected_results"
     json_dir = "card_data"
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(json_dir, exist_ok=True)
     
-    # Initialize EasyOCR reader
-    reader = easyocr.Reader(['de'])
+    image_files = [os.path.join(directory_path, f) for f in os.listdir(directory_path)
+                   if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
     
-    # Process each image in directory
-    for image_file in os.listdir(directory_path):
-        if not image_file.lower().endswith(('.png', '.jpg', '.jpeg')):
-            continue
-            
-        print(f"\nProcessing: {image_file}")
-        
-        try:
-            # Read and enhance image
-            image_path = os.path.join(directory_path, image_file)
-            image = cv2.imread(image_path)
-            
-            # Resize image if too large
-            max_dimension = 1500
-            height, width = image.shape[:2]
-            if max(height, width) > max_dimension:
-                scale = max_dimension / max(height, width)
-                image = cv2.resize(image, None, fx=scale, fy=scale)
-            
-            enhanced = enhance_image(image)
-            
-            # Perform OCR
-            results = reader.readtext(enhanced)
-            
-            if not results:
-                print("No text detected in this image.")
-                continue
-            
-            # Extract and save card information
-            card_info = extract_card_info(results)
-            
-            # Save JSON
-            json_path = os.path.join(json_dir, f"card_data_{os.path.splitext(image_file)[0]}.json")
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(card_info.to_dict(), f, ensure_ascii=False, indent=2)
-            
-            # Save annotated image
-            annotated = image.copy()
-            for (bbox, text, prob) in results:
-                if prob > 0.5:  # Only show confident detections
-                    points = np.array(bbox).astype(np.int32)
-                    cv2.polylines(annotated, [points], True, (0, 255, 0), 2)
-                    # Add text label
-                    x, y = points[0]
-                    cv2.putText(annotated, f"{text}", (x, y-10),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            
-            output_path = os.path.join(output_dir, f"detected_{image_file}")
-            cv2.imwrite(output_path, annotated)
-            
-            # Print extracted information
-            print("\nExtracted Card Information:")
-            for key, value in card_info.to_dict().items():
-                if value:  # Only print non-empty values
-                    print(f"{key}: {value}")
-                    
-        except Exception as e:
-            print(f"Error processing {image_file}: {str(e)}")
+    with Pool() as pool:
+        pool.map(process_single_image, image_files)
 
 if __name__ == "__main__":
     desktop_path = str(Path.home() / "Desktop" / "ids")
     if not os.path.exists(desktop_path):
         print("Please create an 'ids' folder on your Desktop and place the card images there.")
     else:
-        process_images(desktop_path) 
+        process_images(desktop_path)
