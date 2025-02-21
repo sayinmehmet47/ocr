@@ -93,8 +93,47 @@ print(response.json())
     "MUSTERMANN": "95%",
     "MAX": "92%"
     // ... other detected text and their confidence scores
+  },
+  "images": {
+    "original": "base64_encoded_original_image_string",
+    "annotated": "base64_encoded_annotated_image_string"
+  },
+  "processing_details": {
+    "original_size": "1200x800",
+    "processed_size": "1000x667",
+    "file_name": "health_card.jpg",
+    "content_type": "image/jpeg"
   }
 }
+```
+
+7. Working with Base64 Images:
+
+```python
+# Converting base64 back to image in Python
+import base64
+import cv2
+import numpy as np
+
+def base64_to_image(base64_string):
+    # Remove data:image/jpeg;base64, if present
+    if ',' in base64_string:
+        base64_string = base64_string.split(',')[1]
+
+    # Decode base64 string
+    img_data = base64.b64decode(base64_string)
+
+    # Convert to numpy array
+    nparr = np.frombuffer(img_data, np.uint8)
+
+    # Decode image
+    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    return image
+
+# Save base64 image
+def save_base64_image(base64_string, output_path):
+    image = base64_to_image(base64_string)
+    cv2.imwrite(output_path, image)
 ```
 
 ## Outputs
