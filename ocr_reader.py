@@ -23,7 +23,8 @@ class HealthCardInfo:
         self.first_name = ""
         self.birth_date = ""
         self.personal_number = ""
-        self.insurance_provider_id = ""
+        self.insurance_code = ""  # 4-digit Swiss insurance code
+        self.insurance_name = ""  # Insurance provider name
         self.card_number = ""
         self.expiry_date = ""
         self.detected_language = ""
@@ -35,7 +36,8 @@ class HealthCardInfo:
             "first_name": self.first_name,
             "birth_date": self.birth_date,
             "personal_number": self.personal_number,
-            "insurance_provider_id": self.insurance_provider_id,
+            "insurance_code": self.insurance_code,
+            "insurance_name": self.insurance_name,
             "card_number": self.card_number,
             "expiry_date": self.expiry_date,
             "detected_language": self.detected_language
@@ -114,16 +116,18 @@ def extract_card_info(results):
         if "756" in text and "." in text and prob > 0.4:
             detected_values['personal_number'] = text.strip()
         
-        if prob > 0.6:
-            if text == "0032":
-                provider_id = text
-                if idx + 1 < len(results) and "Aquilana" in results[idx + 1][1][0]:
-                    provider_name = results[idx + 1][1][0].strip()
-                    detected_values['insurance_provider_id'] = f"{provider_id} - {provider_name}"
-            elif "Aquilana" in text and 'insurance_provider_id' not in detected_values:
-                if idx > 0 and "0032" in results[idx - 1][1][0]:
-                    provider_id = results[idx - 1][1][0].strip()
-                    detected_values['insurance_provider_id'] = f"{provider_id} - {text}"
+        # Insurance detection - handle both combined and separate formats
+        if '-' in text and prob > 0.5:  # Combined format like "0032-Aquilana"
+            parts = text.split('-')
+            if len(parts) == 2 and len(parts[0].strip()) == 4:
+                detected_values['insurance_code'] = parts[0].strip()
+                detected_values['insurance_name'] = parts[1].strip()
+        elif len(text) == 4 and prob > 0.5:  # Separate format
+            detected_values['insurance_code'] = text
+            if idx + 1 < len(results):
+                next_text = results[idx + 1][1][0].strip()
+                if next_text and next_text[0].isupper():
+                    detected_values['insurance_name'] = next_text
         
         if len(text) == 10 and text.count("/") == 2:
             try:
