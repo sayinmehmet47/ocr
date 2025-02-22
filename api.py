@@ -4,8 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import cv2
 import numpy as np
 import io
-from ocr_reader import extract_card_info
-import easyocr
+from ocr_reader import extract_card_info, process_image_ocr
 from utils import (
     enhance_image,
     resize_image_if_needed,
@@ -75,13 +74,8 @@ async def process_card(
         # Store original image as base64
         original_image_base64 = encode_image_to_base64(image)
         
-        # Enhance image
-        enhanced = enhance_image(image)
-        
-        # Initialize OCR reader with all supported languages
-        reader = easyocr.Reader(SUPPORTED_LANGUAGES, gpu=False)
-        results = reader.readtext(enhanced, min_size=15, 
-                                allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿñ./-')
+        # Process image with OCR
+        results = process_image_ocr(image)
         
         if not results:
             return JSONResponse(

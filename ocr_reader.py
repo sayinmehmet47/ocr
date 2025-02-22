@@ -156,6 +156,20 @@ def extract_card_info(results):
     
     return card_info
 
+def process_image_ocr(image):
+    """
+    Process an image through OCR and return the results.
+    Args:
+        image: numpy array of the image
+    Returns:
+        results: list of OCR results
+    """
+    enhanced = enhance_image(image)
+    reader = easyocr.Reader(SUPPORTED_LANGUAGES, gpu=False)
+    results = reader.readtext(enhanced, min_size=15, 
+                            allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿñ./-')
+    return results
+
 def process_single_image(image_path):
     try:
         output_dir = "detected_results"
@@ -167,12 +181,8 @@ def process_single_image(image_path):
         
         image = cv2.imread(image_path)
         image = resize_image_if_needed(image)
-        enhanced = enhance_image(image)
         
-        # Initialize OCR reader with all supported languages
-        reader = easyocr.Reader(SUPPORTED_LANGUAGES, gpu=False)
-        results = reader.readtext(enhanced, min_size=15, 
-                                allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿñ./-')
+        results = process_image_ocr(image)
         
         if not results:
             print(f"No text detected in {image_path}")
