@@ -1,6 +1,10 @@
-# German Health Insurance Card OCR Reader
+# OCR Application
 
-This script is an OCR (Optical Character Recognition) application designed to automatically read information from German health insurance cards (EHIC - European Health Insurance Card).
+This application uses PaddleOCR to process health insurance cards.
+
+# Swiss Health Insurance Card OCR Reader
+
+This script is an OCR (Optical Character Recognition) application designed to automatically read information from Swiss health insurance cards.
 
 ## Features
 
@@ -9,7 +13,6 @@ This script is an OCR (Optical Character Recognition) application designed to au
 - JSON format data output
 - Annotated image output
 - High accuracy rate
-- German language OCR support
 - REST API endpoint for processing cards
 
 ## Extracted Information

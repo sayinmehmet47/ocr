@@ -32,7 +32,7 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {
-        "message": "Welcome to the Health Insurance Card OCR API",
+        "message": "Health Insurance Card OCR API",
         "supported_languages": SUPPORTED_LANGUAGES
     }
 
@@ -97,7 +97,7 @@ async def process_card(
             "status": "success",
             "card_info": card_info.to_dict(),
             "confidence_scores": {
-                text: f"{prob:.2%}" for _, text, prob in results if prob > 0.5
+                result[1][0]: f"{result[1][1]:.2%}" for result in results if result[1][1] > 0.5
             },
             "images": {
                 "original": original_image_base64,

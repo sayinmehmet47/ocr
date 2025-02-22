@@ -88,9 +88,12 @@ def encode_image_to_base64(image):
 def create_annotated_image(image, results):
     """Create annotated image with detected text regions."""
     annotated = image.copy()
-    for (bbox, text, prob) in results:
+    for result in results:
+        points = np.array(result[0]).astype(np.int32)
+        text = result[1][0]
+        prob = result[1][1]
+        
         if prob > 0.5:
-            points = np.array(bbox).astype(np.int32)
             cv2.polylines(annotated, [points], True, (0, 255, 0), 2)
             x, y = points[0]
             cv2.putText(annotated, f"{text}", (x, y-10),

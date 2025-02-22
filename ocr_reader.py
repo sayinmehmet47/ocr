@@ -3,7 +3,7 @@ import os
 import cv2
 import numpy as np
 import json
-import easyocr
+from paddleocr import PaddleOCR
 from pathlib import Path
 from utils import (
     enhance_image,
@@ -45,7 +45,10 @@ def detect_card_language(results):
     """Detect the language of the card based on field labels."""
     language_scores = {lang: 0 for lang in SUPPORTED_LANGUAGES}
     
-    for _, text, prob in results:
+    for result in results:
+        text = result[1][0]  # PaddleOCR format: [[[points]], [text, confidence]]
+        prob = result[1][1]
+        
         if prob < 0.4:
             continue
             
@@ -69,13 +72,19 @@ def extract_card_info(results):
     
     print(f"\nDetected language: {detected_lang}")
     print("\nDetected text:")
-    for _, text, prob in results:
+    for result in results:
+        text = result[1][0]
+        prob = result[1][1]
         print(f"{text} ({prob:.2%})")
     
     detected_values = {}
     potential_names = []
     
-    for idx, (bbox, text, prob) in enumerate(results):
+    for idx, result in enumerate(results):
+        bbox = result[0]
+        text = result[1][0]
+        prob = result[1][1]
+        
         text = text.strip()
         
         if prob < 0.4:
@@ -97,7 +106,7 @@ def extract_card_info(results):
             if number and len(number) >= 6:
                 detected_values['insurance_number'] = number
             elif idx + 1 < len(results):
-                next_text = results[idx + 1][1].strip()
+                next_text = results[idx + 1][1][0].strip()
                 number = ''.join(filter(str.isdigit, next_text))
                 if number and len(number) >= 6:
                     detected_values['insurance_number'] = number
@@ -108,12 +117,12 @@ def extract_card_info(results):
         if prob > 0.6:
             if text == "0032":
                 provider_id = text
-                if idx + 1 < len(results) and "Aquilana" in results[idx + 1][1]:
-                    provider_name = results[idx + 1][1].strip()
+                if idx + 1 < len(results) and "Aquilana" in results[idx + 1][1][0]:
+                    provider_name = results[idx + 1][1][0].strip()
                     detected_values['insurance_provider_id'] = f"{provider_id} - {provider_name}"
             elif "Aquilana" in text and 'insurance_provider_id' not in detected_values:
-                if idx > 0 and "0032" in results[idx - 1][1]:
-                    provider_id = results[idx - 1][1].strip()
+                if idx > 0 and "0032" in results[idx - 1][1][0]:
+                    provider_id = results[idx - 1][1][0].strip()
                     detected_values['insurance_provider_id'] = f"{provider_id} - {text}"
         
         if len(text) == 10 and text.count("/") == 2:
@@ -138,7 +147,9 @@ def extract_card_info(results):
         detected_values['first_name'] = potential_names[1][0]
     elif len(potential_names) == 1:
         name_text = potential_names[0][0]
-        for _, label_text, _ in results:
+        for result in results:
+            label_text = result[1][0]
+            y_min = min(point[1] for point in result[0])
             if any(label in label_text for label in FIELD_LABELS['surname'][detected_lang]) and \
                abs(potential_names[0][1] - y_min) < 50:
                 detected_values['surname'] = name_text
@@ -165,10 +176,9 @@ def process_image_ocr(image):
         results: list of OCR results
     """
     enhanced = enhance_image(image)
-    reader = easyocr.Reader(SUPPORTED_LANGUAGES, gpu=False)
-    results = reader.readtext(enhanced, min_size=15, 
-                            allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿñ./-')
-    return results
+    ocr = PaddleOCR(use_angle_cls=True, lang='german', show_log=False)
+    results = ocr.ocr(enhanced, cls=True)
+    return results[0] if results else []
 
 def process_single_image(image_path):
     try:
