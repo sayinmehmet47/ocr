@@ -13,6 +13,8 @@ from utils import (
     SUPPORTED_LANGUAGES,
     logger
 )
+import base64
+import os
 
 app = FastAPI(
     title="Health Insurance Card OCR API",
@@ -46,7 +48,6 @@ async def process_card(
             raise HTTPException(status_code=400, detail="No file provided")
             
         logger.debug(f"Received file: {file.filename}")
-        logger.debug(f"Content type: {file.content_type}")
         
         # Validate file type
         if not file.content_type.startswith('image/'):
@@ -57,15 +58,11 @@ async def process_card(
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file received")
             
-        logger.debug(f"File size: {len(contents)} bytes")
-        
         nparr = np.frombuffer(contents, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if image is None:
             raise HTTPException(status_code=400, detail="Invalid image file")
-
-        logger.debug(f"Image shape: {image.shape}")
 
         # Process image
         height, width = image.shape[:2]
@@ -83,14 +80,33 @@ async def process_card(
                 content={"error": "No text detected in the image"}
             )
         
-        logger.debug(f"Number of text regions detected: {len(results)}")
-        
         # Extract card information
         card_info = extract_card_info(results)
         
         # Create annotated image
         annotated = create_annotated_image(image, results)
         annotated_image_base64 = encode_image_to_base64(annotated)
+
+        # Save images to disk
+        # try:
+        #     save_dir = 'detected_images'
+        #     if not os.path.exists(save_dir):
+        #         os.makedirs(save_dir)
+
+        #     # Save original image
+        #     original_path = os.path.join(save_dir, 'original_image.jpg')
+        #     success = cv2.imwrite(original_path, image)
+        #     logger.debug(f"Saving original image: {'Success' if success else 'Failed'} - Path: {original_path}")
+
+        #     # Save annotated image
+        #     annotated_path = os.path.join(save_dir, 'annotated_image.jpg')
+        #     success = cv2.imwrite(annotated_path, annotated)
+        #     logger.debug(f"Saving annotated image: {'Success' if success else 'Failed'} - Path: {annotated_path}")
+            
+        #     logger.info(f"Images saved to {save_dir}/ directory")
+            
+        # except Exception as save_error:
+        #     logger.error(f"Error saving images: {str(save_error)}", exc_info=True)
             
         # Return the extracted information with images
         response_data = {
@@ -108,15 +124,18 @@ async def process_card(
                 "processed_size": f"{image.shape[1]}x{image.shape[0]}",
                 "file_name": file.filename,
                 "content_type": file.content_type,
-                "detected_language": card_info.detected_language
+                "detected_language": card_info.detected_language,
+                "saved_images": {
+                    "original": "detected_images/original_image.jpg",
+                    "annotated": "detected_images/annotated_image.jpg"
+                }
             }
         }
         
-        logger.debug("Successfully processed image and generated response")
         return response_data
         
     except Exception as e:
-        logger.error(f"Error processing image: {str(e)}", exc_info=True)
+        logger.error(f"Error processing image: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"error": f"An error occurred while processing the image: {str(e)}"}
