@@ -5,6 +5,16 @@ import numpy as np
 import json
 import easyocr
 from pathlib import Path
+from utils import (
+    enhance_image,
+    resize_image_if_needed,
+    create_annotated_image,
+    FIELD_LABELS,
+    COUNTRY_CODES,
+    EXCLUDED_WORDS,
+    SUPPORTED_LANGUAGES,
+    logger
+)
 
 class HealthCardInfo:
     def __init__(self):
@@ -16,6 +26,7 @@ class HealthCardInfo:
         self.insurance_provider_id = ""
         self.card_number = ""
         self.expiry_date = ""
+        self.detected_language = ""
 
     def to_dict(self):
         return {
@@ -26,31 +37,37 @@ class HealthCardInfo:
             "personal_number": self.personal_number,
             "insurance_provider_id": self.insurance_provider_id,
             "card_number": self.card_number,
-            "expiry_date": self.expiry_date
+            "expiry_date": self.expiry_date,
+            "detected_language": self.detected_language
         }
 
-def enhance_image(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    denoised = cv2.bilateralFilter(gray, 9, 75, 75)
-    enhanced = cv2.convertScaleAbs(denoised, alpha=1.5, beta=10)
-    return enhanced
+def detect_card_language(results):
+    """Detect the language of the card based on field labels."""
+    language_scores = {lang: 0 for lang in SUPPORTED_LANGUAGES}
+    
+    for _, text, prob in results:
+        if prob < 0.4:
+            continue
+            
+        text = text.strip()
+        for field in FIELD_LABELS:
+            for lang in SUPPORTED_LANGUAGES:
+                if any(label in text for label in FIELD_LABELS[field][lang]):
+                    language_scores[lang] += 1
+    
+    # Get the language with the highest score
+    detected_lang = max(language_scores.items(), key=lambda x: x[1])[0]
+    logger.debug(f"Detected language: {detected_lang} (scores: {language_scores})")
+    return detected_lang
 
 def extract_card_info(results):
-    FIELD_LABELS = {
-        'insurance_number': ['Versicherten-Nr', 'Versicherten-Nr.', 'ersicherten-Nr', 'ersicherten-Nr.'],
-        'surname': ['3. Name', 'Name', '3.Name'],
-        'first_name': ['4. Vornamen', 'Vornamen', '4.Vornamen'],
-        'birth_date': ['5. Geburtsdatum', 'Geburtsdatum', '5.Geburtsdatum', 'Geburtsdat'],
-        'personal_number': ['6. Persönliche Kennnummer', 'Kennnummer', '6. Personliche'],
-        'insurance_provider_id': ['7. Kennnummer des Trägers', '7. Kennnummer'],
-        'card_number': ['8. Kennnummer der Karte'],
-        'expiry_date': ['9. Ablaufdatum']
-    }
-
-    COUNTRY_CODES = ['CH']
-
     card_info = HealthCardInfo()
     
+    # First detect the language
+    detected_lang = detect_card_language(results)
+    card_info.detected_language = detected_lang
+    
+    print(f"\nDetected language: {detected_lang}")
     print("\nDetected text:")
     for _, text, prob in results:
         print(f"{text} ({prob:.2%})")
@@ -68,13 +85,14 @@ def extract_card_info(results):
             continue
             
         if text.isupper() and len(text) > 1 and prob > 0.7:
-            if not any(text in label for labels in FIELD_LABELS.values() for label in labels) and \
-               not any(word in text for word in ["KARTE", "VERSICHERUNG", "EUROPEAN", "EUROPÄISCHE"]):
+            if not any(text in label for labels in FIELD_LABELS.values() for label in labels[detected_lang]) and \
+               not any(word in text for word in EXCLUDED_WORDS[detected_lang]):
                 x_min = min(point[0] for point in bbox)
                 y_min = min(point[1] for point in bbox)
                 potential_names.append((text, y_min, x_min))
         
-        if any(label in text for label in FIELD_LABELS['insurance_number']):
+        # Check field labels in detected language
+        if any(label in text for label in FIELD_LABELS['insurance_number'][detected_lang]):
             number = ''.join(filter(str.isdigit, text))
             if number and len(number) >= 6:
                 detected_values['insurance_number'] = number
@@ -121,31 +139,20 @@ def extract_card_info(results):
     elif len(potential_names) == 1:
         name_text = potential_names[0][0]
         for _, label_text, _ in results:
-            if "3. Name" in label_text and abs(potential_names[0][1] - y_min) < 50:
+            if any(label in label_text for label in FIELD_LABELS['surname'][detected_lang]) and \
+               abs(potential_names[0][1] - y_min) < 50:
                 detected_values['surname'] = name_text
                 break
-            elif "4. Vornamen" in label_text and abs(potential_names[0][1] - y_min) < 50:
+            elif any(label in label_text for label in FIELD_LABELS['first_name'][detected_lang]) and \
+                 abs(potential_names[0][1] - y_min) < 50:
                 detected_values['first_name'] = name_text
                 break
         if 'surname' not in detected_values and 'first_name' not in detected_values:
             detected_values['surname'] = name_text
     
-    if 'insurance_number' in detected_values:
-        card_info.insurance_number = detected_values['insurance_number']
-    if 'surname' in detected_values:
-        card_info.surname = detected_values['surname']
-    if 'first_name' in detected_values:
-        card_info.first_name = detected_values['first_name']
-    if 'birth_date' in detected_values:
-        card_info.birth_date = detected_values['birth_date']
-    if 'personal_number' in detected_values:
-        card_info.personal_number = detected_values['personal_number']
-    if 'insurance_provider_id' in detected_values:
-        card_info.insurance_provider_id = detected_values['insurance_provider_id']
-    if 'card_number' in detected_values:
-        card_info.card_number = detected_values['card_number']
-    if 'expiry_date' in detected_values:
-        card_info.expiry_date = detected_values['expiry_date']
+    # Update card_info with detected values
+    for field, value in detected_values.items():
+        setattr(card_info, field, value)
     
     return card_info
 
@@ -157,18 +164,15 @@ def process_single_image(image_path):
         os.makedirs(json_dir, exist_ok=True)
 
         print(f"\nProcessing: {os.path.basename(image_path)}")
+        
         image = cv2.imread(image_path)
-        
-        max_dimension = 1000
-        height, width = image.shape[:2]
-        if max(height, width) > max_dimension:
-            scale = max_dimension / max(height, width)
-            image = cv2.resize(image, None, fx=scale, fy=scale)
-        
+        image = resize_image_if_needed(image)
         enhanced = enhance_image(image)
         
-        reader = easyocr.Reader(['de'], gpu=False)
-        results = reader.readtext(enhanced, min_size=15, allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz./-')
+        # Initialize OCR reader with all supported languages
+        reader = easyocr.Reader(SUPPORTED_LANGUAGES, gpu=False)
+        results = reader.readtext(enhanced, min_size=15, 
+                                allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿñ./-')
         
         if not results:
             print(f"No text detected in {image_path}")
@@ -181,14 +185,7 @@ def process_single_image(image_path):
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(card_info.to_dict(), f, ensure_ascii=False, indent=2)
         
-        annotated = image.copy()
-        for (bbox, text, prob) in results:
-            if prob > 0.5:
-                points = np.array(bbox).astype(np.int32)
-                cv2.polylines(annotated, [points], True, (0, 255, 0), 2)
-                x, y = points[0]
-                cv2.putText(annotated, f"{text}", (x, y-10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        annotated = create_annotated_image(image, results)
         output_path = os.path.join(output_dir, f"detected_{os.path.basename(image_path)}")
         cv2.imwrite(output_path, annotated)
         
