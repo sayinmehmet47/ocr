@@ -119,17 +119,6 @@ async def process_card(
                 "original": original_image_base64,
                 "annotated": annotated_image_base64
             },
-            "processing_details": {
-                "original_size": f"{width}x{height}",
-                "processed_size": f"{image.shape[1]}x{image.shape[0]}",
-                "file_name": file.filename,
-                "content_type": file.content_type,
-                "detected_language": card_info.detected_language,
-                "saved_images": {
-                    "original": "detected_images/original_image.jpg",
-                    "annotated": "detected_images/annotated_image.jpg"
-                }
-            }
         }
         
         return response_data

@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_DIMENSION = 1200
+MAX_DIMENSION = 2500
 
 # Multi-language field labels
 FIELD_LABELS = {
