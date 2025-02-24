@@ -95,7 +95,8 @@ def extract_card_info(results):
         if text in COUNTRY_CODES:
             continue
             
-        if text.isupper() and len(text) > 1 and prob > 0.7:
+        # Improved name detection - must be longer than 2 characters and not contain numbers
+        if text.isupper() and len(text) > 2 and prob > 0.7 and text.isalpha():
             if not any(text in label for labels in FIELD_LABELS.values() for label in labels[detected_lang]) and \
                not any(word in text for word in EXCLUDED_WORDS[detected_lang]):
                 x_min = min(point[0] for point in bbox)
@@ -117,13 +118,15 @@ def extract_card_info(results):
             detected_values['personal_number'] = text.strip()
         
         # Insurance detection - handle both combined and separate formats
-        if '-' in text and prob > 0.5:  # Combined format like "0032-Aquilana"
-            parts = text.split('-')
-            if len(parts) == 2 and len(parts[0].strip()) == 4:
-                detected_values['insurance_code'] = parts[0].strip()
-                detected_values['insurance_name'] = parts[1].strip()
-        elif len(text) == 4 and prob > 0.5:  # Separate format
-            detected_values['insurance_code'] = text
+        if '-' in text and prob > 0.5:  # Combined format like "0032-Aquilana" or "0032 - Helsana"
+            parts = [p.strip() for p in text.split('-')]
+            if len(parts) == 2:
+                code = ''.join(filter(str.isdigit, parts[0]))
+                if len(code) == 4 or len(code) == 5:  # Allow both 4 and 5 digit codes
+                    detected_values['insurance_code'] = code
+                    detected_values['insurance_name'] = parts[1]
+        elif text.strip().isdigit() and (len(text.strip()) == 4 or len(text.strip()) == 5) and prob > 0.5:  # Separate format
+            detected_values['insurance_code'] = text.strip()
             if idx + 1 < len(results):
                 next_text = results[idx + 1][1][0].strip()
                 if next_text and next_text[0].isupper():
@@ -144,26 +147,51 @@ def extract_card_info(results):
         if text.startswith("80756") and len(text) > 15 and prob > 0.7:
             detected_values['card_number'] = text
     
-    potential_names.sort(key=lambda x: x[1])
+    potential_names.sort(key=lambda x: (x[1], x[2]))  # Sort by y position first, then x position
     
-    if len(potential_names) >= 2:
+    # Improved name assignment
+    for result in results:
+        text = result[1][0].strip()
+        prob = result[1][1]
+        
+        # Look for name field labels
+        if any(label in text for label in FIELD_LABELS['surname'][detected_lang]):
+            # Find the closest name after this label
+            label_y = min(point[1] for point in result[0])
+            closest_name = None
+            min_distance = float('inf')
+            
+            for name, y, _ in potential_names:
+                distance = abs(y - label_y)
+                if distance < min_distance and y >= label_y:
+                    min_distance = distance
+                    closest_name = name
+            
+            if closest_name and min_distance < 100:  # Only assign if within reasonable distance
+                detected_values['surname'] = closest_name
+                potential_names = [n for n in potential_names if n[0] != closest_name]
+        
+        elif any(label in text for label in FIELD_LABELS['first_name'][detected_lang]):
+            # Find the closest name after this label
+            label_y = min(point[1] for point in result[0])
+            closest_name = None
+            min_distance = float('inf')
+            
+            for name, y, _ in potential_names:
+                distance = abs(y - label_y)
+                if distance < min_distance and y >= label_y:
+                    min_distance = distance
+                    closest_name = name
+            
+            if closest_name and min_distance < 100:  # Only assign if within reasonable distance
+                detected_values['first_name'] = closest_name
+                potential_names = [n for n in potential_names if n[0] != closest_name]
+    
+    # If names weren't assigned by labels, use the remaining names in order
+    if potential_names and 'surname' not in detected_values:
         detected_values['surname'] = potential_names[0][0]
-        detected_values['first_name'] = potential_names[1][0]
-    elif len(potential_names) == 1:
-        name_text = potential_names[0][0]
-        for result in results:
-            label_text = result[1][0]
-            y_min = min(point[1] for point in result[0])
-            if any(label in label_text for label in FIELD_LABELS['surname'][detected_lang]) and \
-               abs(potential_names[0][1] - y_min) < 50:
-                detected_values['surname'] = name_text
-                break
-            elif any(label in label_text for label in FIELD_LABELS['first_name'][detected_lang]) and \
-                 abs(potential_names[0][1] - y_min) < 50:
-                detected_values['first_name'] = name_text
-                break
-        if 'surname' not in detected_values and 'first_name' not in detected_values:
-            detected_values['surname'] = name_text
+        if len(potential_names) > 1:
+            detected_values['first_name'] = potential_names[1][0]
     
     # Update card_info with detected values
     for field, value in detected_values.items():
