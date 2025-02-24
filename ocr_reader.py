@@ -117,20 +117,15 @@ def extract_card_info(results):
         if "756" in text and "." in text and prob > 0.4:
             detected_values['personal_number'] = text.strip()
         
-        # Insurance detection - handle both combined and separate formats
-        if '-' in text and prob > 0.5:  # Combined format like "0032-Aquilana" or "0032 - Helsana"
+        # Simplified insurance detection
+        if '-' in text and prob > 0.5:  # Format like "0032-Aquilana" or "0032 - Helsana"
             parts = [p.strip() for p in text.split('-')]
             if len(parts) == 2:
                 code = ''.join(filter(str.isdigit, parts[0]))
                 if len(code) == 4 or len(code) == 5:  # Allow both 4 and 5 digit codes
                     detected_values['insurance_code'] = code
-                    detected_values['insurance_name'] = parts[1]
-        elif text.strip().isdigit() and (len(text.strip()) == 4 or len(text.strip()) == 5) and prob > 0.5:  # Separate format
-            detected_values['insurance_code'] = text.strip()
-            if idx + 1 < len(results):
-                next_text = results[idx + 1][1][0].strip()
-                if next_text and next_text[0].isupper():
-                    detected_values['insurance_name'] = next_text
+                    # Only take the first word of the second part as insurance name
+                    detected_values['insurance_name'] = parts[1].split()[0]
         
         if len(text) == 10 and text.count("/") == 2:
             try:
