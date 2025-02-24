@@ -18,8 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Create a dummy image for model initialization
-RUN mkdir -p /root/.paddleocr/whl && python -c "import numpy as np; import cv2; img = np.zeros((100,100,3), np.uint8); cv2.imwrite('dummy.jpg', img); from paddleocr import PaddleOCR; ocr = PaddleOCR(use_angle_cls=True, lang='german', show_log=False); ocr.ocr('dummy.jpg', cls=True)"
-
+RUN mkdir -p /root/.paddleocr/whl
 # Copy the rest of the application
 COPY . .
 
