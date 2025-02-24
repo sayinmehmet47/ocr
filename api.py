@@ -76,7 +76,7 @@ async def process_card(
         
         if not results:
             return JSONResponse(
-                status_code=404,
+                status_code=422,
                 content={"error": "No text detected in the image"}
             )
         
