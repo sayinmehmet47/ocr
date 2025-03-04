@@ -56,7 +56,7 @@ FIELD_LABELS = {
 
 # Common words to exclude from name detection
 EXCLUDED_WORDS = {
-    'de': ['KARTE', 'VERSICHERUNG', 'EUROPEAN', 'EUROPÄISCHE'],
+    'de': ['KARTE', 'VERSICHERUNG', 'EUROPEAN', 'EUROPÄISCHE', 'EUROPAISCHE'],
     'fr': ['CARTE', 'ASSURANCE', 'EUROPÉENNE', 'SANTÉ'],
     'it': ['CARTA', 'ASSICURAZIONE', 'EUROPEA', 'SANITARIA']
 }

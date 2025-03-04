@@ -55,6 +55,21 @@ def detect_card_language(results):
             continue
             
         text = text.strip()
+        
+        # Give higher weight to card titles which are strong language indicators
+        if "CARTE EUROPEENNE" in text or "CARTE EUROPÉENNE" in text:
+            language_scores['fr'] += 5  # Add 5 points for French title
+            continue
+            
+        if "EUROPÄISCHE" in text:
+            language_scores['de'] += 5  # Add 5 points for German title
+            continue
+            
+        if "TESSERA EUROPEA" in text:
+            language_scores['it'] += 5  # Add 5 points for Italian title
+            continue
+        
+        # Check field labels
         for field in FIELD_LABELS:
             for lang in SUPPORTED_LANGUAGES:
                 if any(label in text for label in FIELD_LABELS[field][lang]):
@@ -95,16 +110,39 @@ def extract_card_info(results):
         if text in COUNTRY_CODES:
             continue
             
-        # Improved name detection - must be longer than 2 characters and not contain numbers
-        if text.isupper() and len(text) > 2 and prob > 0.7 and text.isalpha():
-            if not any(text in label for labels in FIELD_LABELS.values() for label in labels[detected_lang]) and \
-               not any(word in text for word in EXCLUDED_WORDS[detected_lang]):
-                x_min = min(point[0] for point in bbox)
-                y_min = min(point[1] for point in bbox)
-                potential_names.append((text, y_min, x_min))
+        # Simplified name detection - names are uppercase, without numbers, and have good confidence
+        if text.isupper() and len(text) > 2 and prob > 0.7:
+            # Check if text contains only letters and spaces
+            if all(c.isalpha() or c.isspace() for c in text):
+                if not any(text in label for labels in FIELD_LABELS.values() for label in labels[detected_lang]) and \
+                   not any(word in text for word in EXCLUDED_WORDS[detected_lang]):
+                    y_min = min(point[1] for point in bbox)
+                    x_min = min(point[0] for point in bbox)
+                    potential_names.append((text, y_min, x_min))
         
-        # Check field labels in detected language
+        # Universal personal number detection - "756.XXXX.XXXX.XX" is a standard Swiss format
+        # This will detect personal numbers properly regardless of language
+        if "756" in text and prob > 0.7:
+            # Clean the text to handle variations
+            cleaned_text = text.strip()
+            
+            # Case 1: Already formatted with periods (e.g., "756.1234.5678.90")
+            if cleaned_text.count('.') >= 2 and cleaned_text.startswith('756'):
+                detected_values['personal_number'] = cleaned_text
+            
+            # Case 2: Just digits or missing periods (e.g., "7561234567890")
+            else:
+                digits = ''.join(filter(str.isdigit, cleaned_text))
+                if digits.startswith("756") and len(digits) >= 13:
+                    # Format it correctly with periods
+                    formatted = digits[:3] + "." + digits[3:7] + "." + digits[7:11]
+                    if len(digits) >= 13:
+                        formatted += "." + digits[11:13]
+                    detected_values['personal_number'] = formatted
+        
+        # Check field labels in detected language for insurance number
         if any(label in text for label in FIELD_LABELS['insurance_number'][detected_lang]):
+            # Extract the number from this text or the next item
             number = ''.join(filter(str.isdigit, text))
             if number and len(number) >= 6:
                 detected_values['insurance_number'] = number
@@ -114,19 +152,38 @@ def extract_card_info(results):
                 if number and len(number) >= 6:
                     detected_values['insurance_number'] = number
         
-        if "756" in text and "." in text and prob > 0.4:
-            detected_values['personal_number'] = text.strip()
-        
-        # Simplified insurance detection
-        if '-' in text and prob > 0.5:  # Format like "0032-Aquilana" or "0032 - Helsana"
+        # Universal insurance code-name detection
+        # This handles both combined format "0032 - Aquilana" and separate occurrences
+        if '-' in text and prob > 0.6:
             parts = [p.strip() for p in text.split('-')]
             if len(parts) == 2:
+                # First part should contain the insurance code (4-5 digits)
                 code = ''.join(filter(str.isdigit, parts[0]))
-                if len(code) == 4 or len(code) == 5:  # Allow both 4 and 5 digit codes
+                if len(code) >= 4 and len(code) <= 5:
                     detected_values['insurance_code'] = code
-                    # Only take the first word of the second part as insurance name
-                    detected_values['insurance_name'] = parts[1].split()[0]
+                    
+                    # Second part is the insurance name
+                    if parts[1]:
+                        detected_values['insurance_name'] = parts[1].split()[0]  # Take first word
         
+        # If we find a standalone numeric code that looks like an insurance code
+        elif text.isdigit() and len(text) in (4, 5) and prob > 0.7:
+            detected_values['insurance_code'] = text
+            
+            # Check if the next text might be the insurance provider name
+            if idx + 1 < len(results):
+                next_text = results[idx + 1][1][0].strip()
+                next_prob = results[idx + 1][1][1]
+                
+                if next_prob > 0.7 and len(next_text) > 2 and next_text[0].isupper():
+                    if not any(c.isdigit() for c in next_text):  # No digits in insurance name
+                        detected_values['insurance_name'] = next_text.split()[0]
+        
+        # Card number detection - typically starts with "80756" followed by many digits
+        if text.startswith("80756") and len(text) > 15 and prob > 0.7:
+            detected_values['card_number'] = text
+        
+        # Date detection - finds both birth dates and expiry dates in DD/MM/YYYY format
         if len(text) == 10 and text.count("/") == 2:
             try:
                 day, month, year = text.split("/")
@@ -138,56 +195,27 @@ def extract_card_info(results):
                             detected_values['expiry_date'] = text
             except:
                 pass
+    
+    # Sort potential names by vertical (y) position first, then horizontal (x) position
+    potential_names.sort(key=lambda x: (x[1], x[2]))
+    
+    
+    if potential_names:
+        if len(potential_names) >= 2:
+            # If multiple names are detected, use a simple convention based on health card layouts:
+            # The first name in order (higher on card) is the surname
+            # The second name in order (lower on card) is the first name
+            detected_values['surname'] = potential_names[0][0]
+            detected_values['first_name'] = ' '.join([name[0] for name in potential_names[1:]])
+            print(f"Names assigned: surname={detected_values['surname']}, first_name={detected_values['first_name']}")
+        elif len(potential_names) == 1:
+            # If only one name is detected, assume it's the surname
+            detected_values['surname'] = potential_names[0][0]
+            print(f"Single name detected: surname={detected_values['surname']}")
+    
+    for key, value in detected_values.items():
+        print(f"- {key}: {value}")
         
-        if text.startswith("80756") and len(text) > 15 and prob > 0.7:
-            detected_values['card_number'] = text
-    
-    potential_names.sort(key=lambda x: (x[1], x[2]))  # Sort by y position first, then x position
-    
-    # Improved name assignment
-    for result in results:
-        text = result[1][0].strip()
-        prob = result[1][1]
-        
-        # Look for name field labels
-        if any(label in text for label in FIELD_LABELS['surname'][detected_lang]):
-            # Find the closest name after this label
-            label_y = min(point[1] for point in result[0])
-            closest_name = None
-            min_distance = float('inf')
-            
-            for name, y, _ in potential_names:
-                distance = abs(y - label_y)
-                if distance < min_distance and y >= label_y:
-                    min_distance = distance
-                    closest_name = name
-            
-            if closest_name and min_distance < 100:  # Only assign if within reasonable distance
-                detected_values['surname'] = closest_name
-                potential_names = [n for n in potential_names if n[0] != closest_name]
-        
-        elif any(label in text for label in FIELD_LABELS['first_name'][detected_lang]):
-            # Find the closest name after this label
-            label_y = min(point[1] for point in result[0])
-            closest_name = None
-            min_distance = float('inf')
-            
-            for name, y, _ in potential_names:
-                distance = abs(y - label_y)
-                if distance < min_distance and y >= label_y:
-                    min_distance = distance
-                    closest_name = name
-            
-            if closest_name and min_distance < 100:  # Only assign if within reasonable distance
-                detected_values['first_name'] = closest_name
-                potential_names = [n for n in potential_names if n[0] != closest_name]
-    
-    # If names weren't assigned by labels, use the remaining names in order
-    if potential_names and 'surname' not in detected_values:
-        detected_values['surname'] = potential_names[0][0]
-        if len(potential_names) > 1:
-            detected_values['first_name'] = potential_names[1][0]
-    
     # Update card_info with detected values
     for field, value in detected_values.items():
         setattr(card_info, field, value)
@@ -237,9 +265,13 @@ def process_single_image(image_path):
         cv2.imwrite(output_path, annotated)
         
         print(f"\nExtracted Card Information for {os.path.basename(image_path)}:")
-        for key, value in card_info.to_dict().items():
-            if value:
-                print(f"{key}: {value}")
+        # Custom printing order to ensure names are displayed first
+        display_order = ['surname', 'first_name', 'birth_date', 'personal_number', 'insurance_code', 
+                         'insurance_name', 'card_number', 'expiry_date', 'detected_language']
+        card_dict = card_info.to_dict()
+        for key in display_order:
+            if card_dict.get(key):
+                print(f"{key}: {card_dict[key]}")
     except Exception as e:
         print(f"Error processing {image_path}: {str(e)}")
 
