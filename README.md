@@ -36,7 +36,7 @@ pip install -r requirements.txt
 
 ### As a Script
 
-1. Create a folder named 'ids' on your Desktop
+1. Create a folder named 'ids' on root
 2. Copy the card photos you want to process into this folder
 3. Run the script:
 
@@ -152,14 +152,6 @@ The script generates two types of outputs:
    - Images with visually marked detected areas
    - Detected text and confidence scores
 
-## Image Enhancement
-
-The script applies the following image enhancements to improve OCR accuracy:
-
-- Grayscale conversion
-- Noise reduction (Bilateral filtering)
-- Contrast enhancement
-- Automatic resizing
 
 ## Debugging
 

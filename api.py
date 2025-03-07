@@ -6,7 +6,6 @@ import numpy as np
 import io
 from ocr_reader import extract_card_info, process_image_ocr
 from utils import (
-    enhance_image,
     resize_image_if_needed,
     encode_image_to_base64,
     create_annotated_image,

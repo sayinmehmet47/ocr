@@ -6,7 +6,6 @@ import json
 from paddleocr import PaddleOCR
 from pathlib import Path
 from utils import (
-    enhance_image,
     resize_image_if_needed,
     create_annotated_image,
     FIELD_LABELS,
@@ -230,9 +229,8 @@ def process_image_ocr(image):
     Returns:
         results: list of OCR results
     """
-    enhanced = enhance_image(image)
-    ocr = PaddleOCR(use_angle_cls=True, lang='german', show_log=False)
-    results = ocr.ocr(enhanced, cls=True)
+    ocr = PaddleOCR(use_angle_cls=True, lang='latin', show_log=False)
+    results = ocr.ocr(image, cls=True)
     return results[0] if results else []
 
 def process_single_image(image_path):
@@ -288,8 +286,4 @@ def process_images(directory_path):
         pool.map(process_single_image, image_files)
 
 if __name__ == "__main__":
-    desktop_path = str(Path.home() / "Desktop" / "ids")
-    if not os.path.exists(desktop_path):
-        print("Please create an 'ids' folder on your Desktop and place the card images there.")
-    else:
-        process_images(desktop_path)
+    process_images("ids")
