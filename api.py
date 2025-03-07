@@ -6,7 +6,6 @@ import numpy as np
 import io
 from ocr_reader import extract_card_info, process_image_ocr
 from utils import (
-    resize_image_if_needed,
     encode_image_to_base64,
     create_annotated_image,
     SUPPORTED_LANGUAGES,
@@ -62,10 +61,6 @@ async def process_card(
         
         if image is None:
             raise HTTPException(status_code=400, detail="Invalid image file")
-
-        # Process image
-        height, width = image.shape[:2]
-        image = resize_image_if_needed(image)
         
         # Store original image as base64
         original_image_base64 = encode_image_to_base64(image)

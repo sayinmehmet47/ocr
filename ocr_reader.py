@@ -1,12 +1,10 @@
 from multiprocessing import Pool
 import os
 import cv2
-import numpy as np
 import json
+from datetime import datetime
 from paddleocr import PaddleOCR
-from pathlib import Path
 from utils import (
-    resize_image_if_needed,
     create_annotated_image,
     FIELD_LABELS,
     COUNTRY_CODES,
@@ -120,7 +118,6 @@ def extract_card_info(results):
                     potential_names.append((text, y_min, x_min))
         
         # Universal personal number detection - "756.XXXX.XXXX.XX" is a standard Swiss format
-        # This will detect personal numbers properly regardless of language
         if "756" in text and prob > 0.7:
             # Clean the text to handle variations
             cleaned_text = text.strip()
@@ -185,14 +182,21 @@ def extract_card_info(results):
         # Date detection - finds both birth dates and expiry dates in DD/MM/YYYY format
         if len(text) == 10 and text.count("/") == 2:
             try:
-                day, month, year = text.split("/")
-                if day.isdigit() and month.isdigit() and year.isdigit():
-                    if len(year) == 4 and 1 <= int(month) <= 12 and 1 <= int(day) <= 31:
-                        if 'birth_date' not in detected_values:
-                            detected_values['birth_date'] = text
-                        else:
-                            detected_values['expiry_date'] = text
-            except:
+                day, month, year = map(int, text.split("/"))
+                # Basic date validation
+                if 1 <= day <= 31 and 1 <= month <= 12 and 1900 <= year <= 2100:
+                    # Convert to datetime object for proper comparison
+                    detected_date = datetime(year, month, day)
+                    current_date = datetime.now()
+                    
+                    # If date is in the future, it's likely an expiry date
+                    if detected_date > current_date:
+                        detected_values['expiry_date'] = text
+                    # If date is in the past, it's likely a birth date
+                    else:
+                        detected_values['birth_date'] = text
+            except (ValueError, TypeError):
+                # Skip invalid dates
                 pass
     
     # Sort potential names by vertical (y) position first, then horizontal (x) position
@@ -243,8 +247,6 @@ def process_single_image(image_path):
         print(f"\nProcessing: {os.path.basename(image_path)}")
         
         image = cv2.imread(image_path)
-        image = resize_image_if_needed(image)
-        
         results = process_image_ocr(image)
         
         if not results:

@@ -7,9 +7,6 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Constants
-MAX_DIMENSION = 2500
-
 # Multi-language field labels
 FIELD_LABELS = {
     'insurance_number': {
@@ -61,18 +58,9 @@ EXCLUDED_WORDS = {
     'it': ['CARTA', 'ASSICURAZIONE', 'EUROPEA', 'SANITARIA']
 }
 
-COUNTRY_CODES = ['CH', 'FR', 'IT']
+COUNTRY_CODES = ['CH']
 
 SUPPORTED_LANGUAGES = ['de', 'fr', 'it']
-
-
-def resize_image_if_needed(image):
-    """Resize image if it exceeds maximum dimension."""
-    height, width = image.shape[:2]
-    if max(height, width) > MAX_DIMENSION:
-        scale = MAX_DIMENSION / max(height, width)
-        image = cv2.resize(image, None, fx=scale, fy=scale)
-    return image
 
 def encode_image_to_base64(image):
     """Convert an OpenCV image to base64 string."""
