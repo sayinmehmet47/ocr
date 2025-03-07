@@ -11,8 +11,6 @@ from utils import (
     SUPPORTED_LANGUAGES,
     logger
 )
-import base64
-import os
 
 app = FastAPI(
     title="Health Insurance Card OCR API",

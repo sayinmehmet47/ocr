@@ -10,7 +10,8 @@ from utils import (
     COUNTRY_CODES,
     EXCLUDED_WORDS,
     SUPPORTED_LANGUAGES,
-    logger
+    logger,
+    enhance_image
 )
 
 class HealthCardInfo:
@@ -202,18 +203,32 @@ def extract_card_info(results):
     # Sort potential names by vertical (y) position first, then horizontal (x) position
     potential_names.sort(key=lambda x: (x[1], x[2]))
     
+    # Filter out potential names that have already been assigned to other fields
+    # particularly the insurance name
+    filtered_names = []
+    for name_tuple in potential_names:
+        name_text = name_tuple[0]
+        # Skip this text if it's already identified as insurance name or other non-name fields
+        is_duplicate = False
+        for field, value in detected_values.items():
+            if field not in ['surname', 'first_name'] and value == name_text:
+                is_duplicate = True
+                break
+        
+        if not is_duplicate:
+            filtered_names.append(name_tuple)
     
-    if potential_names:
-        if len(potential_names) >= 2:
+    if filtered_names:
+        if len(filtered_names) >= 2:
             # If multiple names are detected, use a simple convention based on health card layouts:
             # The first name in order (higher on card) is the surname
             # The second name in order (lower on card) is the first name
-            detected_values['surname'] = potential_names[0][0]
-            detected_values['first_name'] = ' '.join([name[0] for name in potential_names[1:]])
+            detected_values['surname'] = filtered_names[0][0]
+            detected_values['first_name'] = ' '.join([name[0] for name in filtered_names[1:]])
             print(f"Names assigned: surname={detected_values['surname']}, first_name={detected_values['first_name']}")
-        elif len(potential_names) == 1:
+        elif len(filtered_names) == 1:
             # If only one name is detected, assume it's the surname
-            detected_values['surname'] = potential_names[0][0]
+            detected_values['surname'] = filtered_names[0][0]
             print(f"Single name detected: surname={detected_values['surname']}")
     
     for key, value in detected_values.items():
@@ -233,8 +248,9 @@ def process_image_ocr(image):
     Returns:
         results: list of OCR results
     """
+    enhanced = enhance_image(image)
     ocr = PaddleOCR(use_angle_cls=True, lang='latin', show_log=False)
-    results = ocr.ocr(image, cls=True)
+    results = ocr.ocr(enhanced, cls=True)
     return results[0] if results else []
 
 def process_single_image(image_path):
