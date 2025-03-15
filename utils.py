@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import base64
 import logging
+from PIL import Image, ImageDraw, ImageFont
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -76,15 +78,63 @@ def enhance_image(image):
 
 def create_annotated_image(image, results):
     """Create annotated image with detected text regions."""
+    # Make a copy of the original image
     annotated = image.copy()
+    
+    # Convert OpenCV image (BGR) to PIL Image (RGB)
+    image_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(image_rgb)
+    draw = ImageDraw.Draw(pil_image)
+    
+    try:
+        # Try to find a system font that supports umlauts
+        font_size = 28 
+        if os.path.exists('/System/Library/Fonts/Helvetica.ttc'):  # macOS
+            font = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', font_size, index=1)  # index=1 for bold variant
+        elif os.path.exists('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'):  # Linux
+            font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', font_size)
+        else:  # Fallback to default
+            font = ImageFont.load_default()
+    except Exception as e:
+        logger.warning(f"Could not load font: {e}. Using default font.")
+        font = ImageFont.load_default()
+
     for result in results:
         points = np.array(result[0]).astype(np.int32)
         text = result[1][0]
         prob = result[1][1]
         
         if prob > 0.5:
-            cv2.polylines(annotated, [points], True, (0, 255, 0), 2)
+            # Draw bounding box on the OpenCV image with thicker line
+            cv2.polylines(annotated, [points], True, (0, 255, 0), 3)
+            
+            # Get coordinates for text
             x, y = points[0]
-            cv2.putText(annotated, f"{text}", (x, y-10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-    return annotated 
+            
+            # Calculate text size for the frame
+            text_width, text_height = draw.textsize(text, font=font)
+            padding = 10  # Increased padding around text
+            
+            # Draw frame around text with thicker width
+            draw.rectangle([
+                (x, y-30 - padding),  # Adjusted y offset for better positioning
+                (x + text_width + padding * 2, y-30 + text_height + padding)
+            ], outline=(0, 255, 0), width=3)  # Increased outline width
+            
+            # Create stronger stroke effect for better readability
+            stroke_color = (0, 100, 0)  # Darker green for stroke
+            offsets = [
+                (-1, -1), (1, -1), (-1, 1), (1, 1),  # Diagonal offsets
+                (0, -1), (-1, 0), (1, 0), (0, 1),    # Cardinal offsets
+            ]
+            
+            # Draw stroke effect
+            for dx, dy in offsets:
+                draw.text((x + dx, y-30 + dy), text, fill=stroke_color, font=font)
+            
+            # Draw the main text
+            draw.text((x, y-30), text, fill=(0, 255, 0), font=font)
+    
+    # Convert back to OpenCV format (RGB to BGR)
+    final_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+    return final_image 
